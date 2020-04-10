@@ -497,7 +497,7 @@ def getGoldenDataSet():
 
     return X_train, y_train
 
-
+ 
 class MyeScheduler(tf.keras.callbacks.Callback):
     def __init__(self):
         self.losses = []
@@ -525,9 +525,9 @@ class MyeScheduler(tf.keras.callbacks.Callback):
             self.bestLoss = loss
 
         if self.index > 40 or self.epoch > 40:
-            minLoss = np.minimum(self.losses)
+            minLoss = min(self.losses)
             if minLoss > self.bestLoss:
-                print("-I- Stoping traning ...")
+                print("-I- Stopping training ...")
                 self.model.stop_training = True
 
     def lrfn(self, epoch, lr):
@@ -611,13 +611,9 @@ def trainModelResNet():
 
     callbacks_list = [modelCheckPoint, lr_scheduler, sweetSpotFinder]
 
-    history = model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs, validation_data=(X_test, y_test),
+    history = model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs,
+                        validation_data=(X_test, y_test),
                         shuffle=True, callbacks=callbacks_list)
-
-    scores = model.evaluate(X_test, y_test, verbose=1)
-
-    print('Test loss:', scores[0])
-    print('Test accuracy:', scores[1])
 
     pickle.dump(history.history, open('./history/history.pkl', 'wb'))
 
@@ -639,7 +635,7 @@ def provideResults():
     requestImagesTups.sort(key=lambda tup: tup[0], reverse=False)
     requestImages = [t[1] for t in requestImagesTups]
 
-    TEST_IMAGES_TO_LOAD = glob.glob("./data\\images\\Test*.jpg")
+    TEST_IMAGES_TO_LOAD = glob.glob("C:\\Users\\Avi\\Desktop\\PyProj\\PlantPathology\\data\\images\\Test*.jpg")
     TEST_IMAGES_TO_LOAD.sort()
 
     modelsToLoad = glob.glob("./model/Model*")
@@ -690,10 +686,10 @@ def provideResults():
             writer.writerow([reqImg, res[0][0], res[0][1], res[0][2], res[0][3]])
 
 
-findDuplicatedTrainImages()
-saveImagesByCategory()
+# findDuplicatedTrainImages()
+# saveImagesByCategory()
 
-createDataSet()
-createAugmentedDataSet()
+# createDataSet()
+# createAugmentedDataSet()
 trainModelResNet()
 provideResults()
