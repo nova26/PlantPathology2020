@@ -5,6 +5,6 @@ https://www.kaggle.com/c/plant-pathology-2020-fgvc7?utm_medium=email&utm_source=
 
 Using image agumentation for class histogram balancing and more,about 50k images from 1.8k
 
-i achieved 97% on the leadboard with efficientnet b4
+i achieved 97% accuracy on the leadboard with efficientnet b4,
 currently trying to do better ...
 
