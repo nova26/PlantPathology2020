@@ -1,3 +1,7 @@
+import os
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
@@ -5,7 +9,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import cv2
-import os
 
 import threading
 import csv
@@ -16,22 +19,12 @@ import efficientnet.tfkeras as efn
 from PIL import Image
 import imagehash
 
-# import keras
-# from keras.layers import Dense, Conv2D, BatchNormalization, Activation, Dropout, MaxPooling2D
-# from keras.layers import AveragePooling2D, Input, Flatten
-# from keras.regularizers import l2
-# from keras.models import Model
-
-
-import tensorflow as tf, tensorflow.keras.backend as K
-from tensorflow.keras.layers import Dense, BatchNormalization, Activation, Conv2D
-from tensorflow.keras.layers import AveragePooling2D, Input, Flatten
-from tensorflow.keras.regularizers import l2
+import tensorflow as tf
+from tensorflow.keras.layers import Dense
 
 from tensorflow.keras.models import Model
-from tensorflow.keras import optimizers
 
-IMAGE_SIZE = 180
+IMAGE_SIZE = 512
 NUMBER_OF_THREADS = 8
 results_1 = [0 for x in range(NUMBER_OF_THREADS)]
 results_2 = [0 for x in range(NUMBER_OF_THREADS)]
@@ -40,11 +33,9 @@ y_train_golden = np.full((1, 4), 0)
 golden_count = 0
 
 IMAGE_GENERATOR_FACTOR_DICT = {0: 0, 1: 0, 2: 0, 3: 0}
-IMAGE_BIN_SIZE = 10000
+IMAGE_BIN_SIZE = 4200
 
-SUB_MEAN = False
-
-TRAIN_IMAGES = "./data\\images_clean\\Train*"
+TRAIN_IMAGES = "./data\\images_clean\\*"
 
 
 def cleanFolders():
@@ -59,7 +50,7 @@ def cleanFolders():
 
 
 def get_model(nb_classes=4):
-    base_model = efn.EfficientNetB7(weights='imagenet', include_top=False, pooling='avg',
+    base_model = efn.EfficientNetB5(weights='imagenet', include_top=False, pooling='avg',
                                     input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3))
     x = base_model.output
     predictions = Dense(nb_classes, activation="softmax")(x)
@@ -79,109 +70,8 @@ def showHistory():
     exit(1)
 
 
-def resnet_layer(inputs,
-                 num_filters=16,
-                 kernel_size=3,
-                 strides=1,
-                 activation='relu',
-                 batch_normalization=True,
-                 conv_first=True):
-    conv = Conv2D(num_filters,
-                  kernel_size=kernel_size,
-                  strides=strides,
-                  padding='same',
-                  kernel_initializer='he_normal',
-                  kernel_regularizer=l2(1e-4))
-
-    x = inputs
-    if conv_first:
-        x = conv(x)
-        if batch_normalization:
-            x = BatchNormalization()(x)
-        if activation is not None:
-            x = Activation(activation)(x)
-    else:
-        if batch_normalization:
-            x = BatchNormalization()(x)
-        if activation is not None:
-            x = Activation(activation)(x)
-        x = conv(x)
-    return x
-
-
-def resnet_v2(input_shape, depth, num_classes=4):
-    if (depth - 2) % 9 != 0:
-        raise ValueError('depth should be 9n+2 (eg 56 or 110 in [b])')
-    # Start model definition.
-    num_filters_in = 16
-    num_res_blocks = int((depth - 2) / 9)
-
-    inputs = Input(shape=input_shape)
-    # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
-    x = resnet_layer(inputs=inputs,
-                     num_filters=num_filters_in,
-                     conv_first=True)
-
-    # Instantiate the stack of residual units
-    for stage in range(3):
-        for res_block in range(num_res_blocks):
-            activation = 'relu'
-            batch_normalization = True
-            strides = 1
-            if stage == 0:
-                num_filters_out = num_filters_in * 4
-                if res_block == 0:  # first layer and first stage
-                    activation = None
-                    batch_normalization = False
-            else:
-                num_filters_out = num_filters_in * 2
-                if res_block == 0:  # first layer but not first stage
-                    strides = 2  # downsample
-
-            # bottleneck residual unit
-            y = resnet_layer(inputs=x,
-                             num_filters=num_filters_in,
-                             kernel_size=1,
-                             strides=strides,
-                             activation=activation,
-                             batch_normalization=batch_normalization,
-                             conv_first=False)
-            y = resnet_layer(inputs=y,
-                             num_filters=num_filters_in,
-                             conv_first=False)
-            y = resnet_layer(inputs=y,
-                             num_filters=num_filters_out,
-                             kernel_size=1,
-                             conv_first=False)
-            if res_block == 0:
-                # linear projection residual shortcut connection to match
-                # changed dims
-                x = resnet_layer(inputs=x,
-                                 num_filters=num_filters_out,
-                                 kernel_size=1,
-                                 strides=strides,
-                                 activation=None,
-                                 batch_normalization=False)
-            x = tf.keras.layers.add([x, y])
-
-        num_filters_in = num_filters_out
-
-    # Add classifier on top.
-    # v2 has BN-ReLU before Pooling
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = AveragePooling2D(pool_size=8)(x)
-    y = Flatten()(x)
-    outputs = Dense(num_classes,
-                    activation='softmax',
-                    kernel_initializer='he_normal')(y)
-
-    # Instantiate model.
-    model = Model(inputs=inputs, outputs=outputs)
-    return model
-
-
 def findDuplicatedTrainImages():
+    global TRAIN_IMAGES
     imageNameToLables = {}
 
     dataMappingFile = './data/train.csv'
@@ -215,6 +105,22 @@ def findDuplicatedTrainImages():
         if len(hash_to_image_name[k]) > 1:
             print("{}:{}".format(k, hash_to_image_name[k]))
     print("Done")
+
+
+def calcDistanceMatrix():
+    ImagesToLoad = glob.glob('./data/scab/*')
+
+    for x in range(len(ImagesToLoad)):
+        y = x + 1
+        distance_vector = []
+        xImageHash = imagehash.average_hash(Image.open(ImagesToLoad[x]))
+        print("- {}".format(ImagesToLoad[x]))
+        while y != len(ImagesToLoad):
+            yImageHash = imagehash.average_hash(Image.open(ImagesToLoad[y]))
+            print("-- {}".format(ImagesToLoad[y]))
+            print("--- {}".format(abs(xImageHash - yImageHash)))
+            distance_vector.append(abs(xImageHash - yImageHash))
+        print('{} --> {}'.format(ImagesToLoad[x], distance_vector))
 
 
 def saveImagesByCategory():
@@ -282,6 +188,7 @@ def createDataSet():
 
     histogram = [0 for x in range(4)]
 
+    pack = 0
     for im in TRAIN_IMAGES_TO_LOAD:
         print('X_train  {}/{}'.format(X_train.shape[0], totalImages))
 
@@ -303,11 +210,20 @@ def createDataSet():
         label = np.reshape(label, (1, 4))
         y_train = np.concatenate((y_train, label), axis=0)
 
-    X_train = np.delete(X_train, 0, 0)
-    y_train = np.delete(y_train, 0, 0)
+        if X_train.shape[0] >= 200:
+            X_train = np.delete(X_train, 0, 0)
+            y_train = np.delete(y_train, 0, 0)
+            pickle.dump(X_train, open("./pickles/X_train_{}.pkl".format(pack), "wb"), protocol=4)
+            pickle.dump(y_train, open("./pickles/y_train_{}.pkl".format(pack), "wb"), protocol=4)
+            X_train = np.full((1, IMAGE_SIZE, IMAGE_SIZE, 3), 0)
+            y_train = np.full((1, 4), 0)
+            pack += 1
 
-    pickle.dump(X_train, open("./pickles/X_train.pkl", "wb"))
-    pickle.dump(y_train, open("./pickles/y_train.pkl", "wb"))
+    if X_train.shape[0] >= 1:
+        X_train = np.delete(X_train, 0, 0)
+        y_train = np.delete(y_train, 0, 0)
+        pickle.dump(X_train, open("./pickles/X_train_{}.pkl".format(pack), "wb"), protocol=4)
+        pickle.dump(y_train, open("./pickles/y_train_{}.pkl".format(pack), "wb"), protocol=4)
 
 
 def imagesToSaveThreaded(imagesToSave, label, threadId, arrayId):
@@ -383,12 +299,14 @@ def copyDataThread(arrayId):
             y_train_golden = np.concatenate((y_train_golden, y_train), axis=0)
         results_2 = [0 for x in range(NUMBER_OF_THREADS)]
 
-    if X_train_golden.shape[0] > 1999:
+    if X_train_golden.shape[0] > 1000:
         X_train_golden = np.delete(X_train_golden, 0, 0)
         y_train_golden = np.delete(y_train_golden, 0, 0)
 
-        pickle.dump(X_train_golden, open("./augmented/X_train_{}.pkl".format(golden_count), "wb"))
-        pickle.dump(y_train_golden, open("./augmented/y_train_{}.pkl".format(golden_count), "wb"))
+        X_train_golden = X_train_golden.astype('uint8')
+
+        pickle.dump(X_train_golden, open("./augmented/X_train_{}.pkl".format(golden_count), "wb"), protocol=4)
+        pickle.dump(y_train_golden, open("./augmented/y_train_{}.pkl".format(golden_count), "wb"), protocol=4)
 
         golden_count = golden_count + 1
 
@@ -418,6 +336,7 @@ def createAugmentedDataSet():
         if X_train is None:
             X_train = pickle.load(open(X, "rb"))
             y_train = pickle.load(open(y, "rb"))
+            print('Data {}/{}'.format(i + 1, len(data)))
             continue
 
         X_train_tmp = pickle.load(open(X, "rb"))
@@ -426,7 +345,7 @@ def createAugmentedDataSet():
         X_train = np.concatenate((X_train, X_train_tmp), axis=0)
         y_train = np.concatenate((y_train, y_train_tmp), axis=0)
 
-        print('Data {}/{}'.format(i, len(data)))
+        print('Data {}/{}'.format(i + 1, len(data)))
 
     if X_train.shape[0] != y_train.shape[0]:
         print("ERROR in createAugmentedDataSet")
@@ -443,8 +362,10 @@ def createAugmentedDataSet():
         IMAGE_GENERATOR_FACTOR_DICT[x] = IMAGE_BIN_SIZE // histogram[x]
     print("FACTORS {}".format(IMAGE_GENERATOR_FACTOR_DICT))
 
-    pickle.dump(X_train, open("./augmented/X_train.pkl", "wb"))
-    pickle.dump(y_train, open("./augmented/y_train.pkl", "wb"))
+    X_train = X_train.astype('uint8')
+
+    pickle.dump(X_train, open("./augmented/X_train.pkl", "wb"), protocol=4)
+    pickle.dump(y_train, open("./augmented/y_train.pkl", "wb"), protocol=4)
 
     arry_id = 0
     threads = list()
@@ -490,8 +411,8 @@ def createAugmentedDataSet():
     X_train_golden = np.delete(X_train_golden, 0, 0)
     y_train_golden = np.delete(y_train_golden, 0, 0)
 
-    pickle.dump(X_train_golden, open("./augmented/X_train_{}.pkl".format(golden_count), "wb"))
-    pickle.dump(y_train_golden, open("./augmented/y_train_{}.pkl".format(golden_count), "wb"))
+    pickle.dump(X_train_golden, open("./augmented/X_train_{}.pkl".format(golden_count), "wb"), protocol=4)
+    pickle.dump(y_train_golden, open("./augmented/y_train_{}.pkl".format(golden_count), "wb"), protocol=4)
 
     print("Done")
 
@@ -524,12 +445,16 @@ def getGoldenDataSet():
 
         if X_train is None:
             X_train = pickle.load(open(X, "rb"))
+            X_train = X_train.astype('uint8')
+
             y_train = pickle.load(open(y, "rb"))
             print('Data {}/{}'.format(i, len(data)))
             print("Size Total {}".format(X_train.shape))
             continue
 
         X_train_tmp = pickle.load(open(X, "rb"))
+        X_train_tmp = X_train_tmp.astype('uint8')
+
         y_train_tmp = pickle.load(open(y, "rb"))
 
         print("X_train_tmp Size {}".format(X_train_tmp.shape))
@@ -549,6 +474,8 @@ def getGoldenDataSet():
         print('Data {}/{}'.format(i, len(data)))
         print("Size Total {}".format(X_train.shape))
 
+        break
+
     print("Size {}".format(X_train.shape))
 
     histogram = [0 for x in range(4)]
@@ -558,90 +485,115 @@ def getGoldenDataSet():
 
     print("Histogram {}".format(histogram))
 
-    #    pickle.dump(X_train, open("./golden/X_train.pkl", "wb"), protocol=4)
-    #    pickle.dump(y_train, open("./golden/y_train.pkl", "wb"), protocol=4)
+    print("Shuffle data ...")
+    for x in range(4):
+        X_train, y_train = shuffle(X_train, y_train)
+
+    try:
+        pickle.dump(X_train, open("./golden/X_train.pkl", "wb"), protocol=4)
+        pickle.dump(y_train, open("./golden/y_train.pkl", "wb"), protocol=4)
+    except:
+        print("-E- Failed to save augmented")
 
     return X_train, y_train
 
 
-LR_START = 0.00001
-LR_MAX = 0.0001
-LR_MIN = 0.00001
-LR_RAMPUP_EPOCHS = 100
-LR_SUSTAIN_EPOCHS = 10
-LR_EXP_DECAY = .94
+class MyeScheduler(tf.keras.callbacks.Callback):
+    def __init__(self):
+        self.losses = []
+        self.index = 0
 
+        self.reduceFactor = np.sqrt(0.1)
 
-def lrfn(epoch):
-    if epoch < LR_RAMPUP_EPOCHS:
-        lr = (LR_MAX - LR_START) / LR_RAMPUP_EPOCHS * epoch + LR_START
-    elif epoch < LR_RAMPUP_EPOCHS + LR_SUSTAIN_EPOCHS:
-        lr = LR_MAX
-    else:
-        lr = (LR_MAX - LR_MIN) * LR_EXP_DECAY ** (epoch - LR_RAMPUP_EPOCHS - LR_SUSTAIN_EPOCHS) + LR_MIN
-    return lr
+        self.LR_START = 0.00001
+        self.LR_MAX = 0.001
+        self.LR_MIN = 0.00001
+        self.LR_RAMPUP_EPOCHS = 15
+        self.LR_SUSTAIN_EPOCHS = 3
+        self.LR_EXP_DECAY = .8
+        self.bestLoss = None
+        self.epoch = None
 
+    def on_epoch_end(self, batch, logs=None):
+        if logs is None:
+            logs = {}
+        loss = logs.get('val_loss')
 
-# rng = [i for i in range(200)]
-# y = [lrfn(x) for x in rng]
-# plt.plot(rng, y)
-# plt.show()
+        self.losses.append(loss)
 
-# print("Learning rate schedule: {:.3g} to {:.3g} to {:.3g}".format(y[0], max(y), y[-1]))
+        if self.bestLoss is None or loss < self.bestLoss:
+            self.bestLoss = loss
 
+        if self.index > 40 or self.epoch > 40:
+            minLoss = np.minimum(self.losses)
+            if minLoss > self.bestLoss:
+                print("-I- Stoping traning ...")
+                self.model.stop_training = True
 
-def lr_schedule(epoch):
-    lr = 1e-3
-    if epoch > 80:
-        lr *= 0.5e-3
-    elif epoch > 60:
-        lr *= 1e-3
-    elif epoch > 30:
-        lr *= 1e-2
-    elif epoch > 15:
-        lr *= 1e-1
-    print('Learning rate: ', lr)
-    return lr
+    def lrfn(self, epoch, lr):
+        print("In my class with {}".format(lr))
+
+        self.epoch = epoch
+
+        if len(self.losses) > 25:
+            self.losses = self.losses[-25:]
+
+        elif len(self.losses) < 3:
+            return self.calcLearningRateForVal(self.index)
+
+        if self.losses[-1] < self.losses[-2]:
+            print("-I- LR is OK")
+            return lr
+
+        if self.losses[-1] == self.losses[-2] == self.losses[-3]:
+            print("-I- Reducing Learning rate on Plateau")
+            return lr * self.reduceFactor
+
+        self.index = self.index + 1
+        print("-I- On new index: {}".format(self.index))
+        n_lr = self.calcLearningRateForVal(self.index)
+
+        return n_lr
+
+    def calcLearningRateForVal(self, i):
+        if i < self.LR_RAMPUP_EPOCHS:
+            lr = (self.LR_MAX - self.LR_START) / self.LR_RAMPUP_EPOCHS * i + self.LR_START
+        elif i < self.LR_RAMPUP_EPOCHS + self.LR_SUSTAIN_EPOCHS:
+            lr = self.LR_MAX
+        else:
+            lr = (self.LR_MAX - self.LR_MIN) * self.LR_EXP_DECAY ** (
+                        i - self.LR_RAMPUP_EPOCHS - self.LR_SUSTAIN_EPOCHS) + self.LR_MIN
+        return lr
 
 
 def trainModelResNet():
-    batch_size = 10
-    epochs = 200
-    num_classes = 4
-    n = 2
-
-    depth = n * 9 + 2
-
-    model_type = 'ResNet%dv%d' % (depth, 2)
-    print(model_type)
+    print("--" * 34)
+    batch_size = 3
+    epochs = 1000
 
     X_train, y_train = getGoldenDataSet()
+
+    print("Data set size {}".format(X_train.shape))
+
+    print("Normalize data ...")
     X_train = X_train.astype('float32') / 255
-
-    if SUB_MEAN:
-        GLOBAL_xMean = np.mean(X_train, axis=0)
-        pickle.dump(GLOBAL_xMean, open("./GLOBAL_xMean.pkl", "wb"))
-        X_train -= GLOBAL_xMean
-
-    for x in range(4):
-        X_train, y_train = shuffle(X_train, y_train)
+    print("Done")
 
     X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=0.33, random_state=42)
 
-    input_shape = X_train.shape[1:]
+    print("Training Data info:")
+    print('X_train shape: {} y_train shape: {}'.format(X_train.shape, y_train.shape))
 
-    print('x_train shape:', X_train.shape)
-    print('y_train shape:', y_train.shape)
+    print('X_test shape: {} y_test shape:{}'.format(X_test.shape, y_test.shape))
 
-    print('X_test shape:', X_test.shape)
-    print('y_test shape:', y_test.shape)
-
-    # model = resnet_v2(input_shape=input_shape, depth=depth, num_classes=num_classes)
+    print("Loading model ...")
     model = get_model()
 
-    # opt = keras.optimizers.SGD(lr=0.01, momentum=0.8, nesterov=False)
-    opti = tf.keras.optimizers.Adam(learning_rate=lrfn(0))
-    model.compile(optimizer=opti, loss='categorical_crossentropy', metrics=['accuracy'])
+    sweetSpotFinder = MyeScheduler()
+
+    optimizer = tf.keras.optimizers.Adam(learning_rate=sweetSpotFinder.lrfn(0, 0))
+
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
 
     fileName = 'Model_epoch{epoch:02d}_loss{val_loss:.5f}_acc{val_accuracy:.5f}.h5'
 
@@ -655,15 +607,9 @@ def trainModelResNet():
         period=1
     )
 
-    # earlyStopping = keras.callbacks.EarlyStopping(monitor='val_loss', patience=30)
+    lr_scheduler = tf.keras.callbacks.LearningRateScheduler(sweetSpotFinder.lrfn, verbose=True)
 
-    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(factor=np.sqrt(0.1), patience=5, verbose=1, cooldown=0,
-                                                     min_lr=0.5e-6)
-
-    lr_scheduler = tf.keras.callbacks.LearningRateScheduler(lrfn, verbose=True)
-
-    # callbacks_list = [modelCheckPoint, reduce_lr, lr_scheduler, earlyStopping]
-    callbacks_list = [modelCheckPoint, reduce_lr, lr_scheduler]
+    callbacks_list = [modelCheckPoint, lr_scheduler, sweetSpotFinder]
 
     history = model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs, validation_data=(X_test, y_test),
                         shuffle=True, callbacks=callbacks_list)
@@ -693,7 +639,7 @@ def provideResults():
     requestImagesTups.sort(key=lambda tup: tup[0], reverse=False)
     requestImages = [t[1] for t in requestImagesTups]
 
-    TEST_IMAGES_TO_LOAD = glob.glob("C:\\Users\\Avi\\Desktop\\PyProj\\PlantPathology\\data\\images\\Test*.jpg")
+    TEST_IMAGES_TO_LOAD = glob.glob("./data\\images\\Test*.jpg")
     TEST_IMAGES_TO_LOAD.sort()
 
     modelsToLoad = glob.glob("./model/Model*")
@@ -710,6 +656,7 @@ def provideResults():
     print("Selected Model {}".format(lossToModelName[-1][1]))
     print("Loading Model ...")
     model = tf.keras.models.load_model(lossToModelName[-1][1])
+    print("Done")
 
     imageNameToResult = {}
 
@@ -722,10 +669,6 @@ def provideResults():
         image = cv2.resize(image, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_AREA)
 
         image = image.astype('float32') / 255
-
-        if SUB_MEAN:
-            X_train_Mean = pickle.load(open("./GLOBAL_xMean.pkl", "rb"))
-            image -= X_train_Mean
 
         image = np.reshape(image, (1, IMAGE_SIZE, IMAGE_SIZE, 3))
 
@@ -747,10 +690,10 @@ def provideResults():
             writer.writerow([reqImg, res[0][0], res[0][1], res[0][2], res[0][3]])
 
 
-# findDuplicatedTrainImages()
-# saveImagesByCategory()
+findDuplicatedTrainImages()
+saveImagesByCategory()
 
-# createDataSet()
-# createAugmentedDataSet()
-# trainModelResNet()
+createDataSet()
+createAugmentedDataSet()
+trainModelResNet()
 provideResults()
